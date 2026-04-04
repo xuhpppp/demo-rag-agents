@@ -1,0 +1,17 @@
+services:
+  mysql:
+    image: mysql:8.0.40
+    container_name: demo_rag_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: rag_db
+      MYSQL_USER: rag_user
+      MYSQL_PASSWORD: rag_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:
