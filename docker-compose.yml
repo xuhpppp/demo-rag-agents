@@ -13,5 +13,15 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
 
+  chromadb:
+    image: chromadb/chroma:1.5.5
+    container_name: demo_rag_chromadb
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    volumes:
+      - chromadb_data:/chroma/chroma
+
 volumes:
   mysql_data:
+  chromadb_data:

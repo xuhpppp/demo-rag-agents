@@ -8,7 +8,7 @@ A multi-agent system built with LangGraph and LangChain, using Claude on AWS Bed
 User
  │
  ▼
-Orchestrator Agent (main.py)
+Orchestrator Agent (app.py)
  │   Claude Sonnet 4.6 via Bedrock
  │   Decides which tool(s) to call based on the question
  │
@@ -31,7 +31,7 @@ Orchestrator Agent (main.py)
 
 ## Components
 
-### Orchestrator (`main.py`)
+### Orchestrator (`app.py`)
 
 - Entry point for user interaction
 - Routes questions to the appropriate sub-agent tool
@@ -44,6 +44,15 @@ Orchestrator Agent (main.py)
 - Follows a fixed reasoning loop: list tables → inspect schema → validate SQL → execute → summarize
 - Read-only: DML statements (INSERT, UPDATE, DELETE, DROP) are prohibited by its system prompt
 - Exposed via `create_sql_agent()` for import by the orchestrator, and runnable standalone via `python -m agents.synthea_sql_agent`
+
+## Infrastructure
+
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| MySQL | `mysql:8.0.40` | 3306 | Primary database — stores all Synthea patient data |
+| ChromaDB | `chromadb:1.5.5` | 8001 | Vector database — stores document embeddings for RAG |
+
+Both services are defined in `docker-compose.yml` with persistent named volumes.
 
 ## Adding a New Sub-Agent
 
