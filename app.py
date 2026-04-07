@@ -2,7 +2,7 @@ import json
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from langchain_aws import ChatBedrock
@@ -10,6 +10,8 @@ from langchain_core.tools import tool
 from langchain.agents import create_agent
 
 from agents.synthea_sql_agent import create_sql_agent
+from queue_manager import file_queue, FileJob
+from consumer import consume
 
 load_dotenv()
 
@@ -60,13 +62,69 @@ Never use pipe characters for anything other than markdown tables.""",
 app = FastAPI()
 
 
+@app.on_event("startup")
+async def startup():
+    import asyncio
+    asyncio.create_task(consume())
+
+
 class ChatRequest(BaseModel):
     message: str
+
+
+UPLOAD_DIR = "uploads"
 
 
 @app.get("/")
 def index():
     return FileResponse("static/index.html")
+
+
+@app.get("/upload")
+def upload_page():
+    return FileResponse("static/upload.html")
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile):
+    if not file.filename.endswith(".txt"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=".txt ファイルのみアップロードできます")
+
+    filepath = os.path.join(UPLOAD_DIR, file.filename)
+    contents = await file.read()
+    with open(filepath, "wb") as f:
+        f.write(contents)
+
+    job = FileJob(filename=file.filename, filepath=filepath, size_bytes=len(contents))
+    await file_queue.push(job)
+
+    return {"filename": file.filename}
+
+
+@app.get("/vectors")
+def vectors_count():
+    from consumer import parent_collection, child_collection
+    return {
+        "parent_chunks": parent_collection.count(),
+        "child_chunks": child_collection.count(),
+    }
+
+
+@app.delete("/vectors")
+def vectors_clear():
+    from consumer import chroma_client, bedrock_ef, parent_collection, child_collection
+    import consumer
+
+    chroma_client.delete_collection("parent_chunks")
+    chroma_client.delete_collection("child_chunks")
+    consumer.parent_collection = chroma_client.get_or_create_collection(
+        "parent_chunks", embedding_function=bedrock_ef
+    )
+    consumer.child_collection = chroma_client.get_or_create_collection(
+        "child_chunks", embedding_function=bedrock_ef
+    )
+    return {"status": "cleared"}
 
 
 @app.post("/chat")

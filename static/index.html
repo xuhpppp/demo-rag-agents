@@ -21,7 +21,19 @@
       padding: 16px 24px;
       font-size: 18px;
       font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
+
+    header a {
+      color: #fff;
+      text-decoration: none;
+      font-size: 14px;
+      opacity: 0.85;
+    }
+
+    header a:hover { opacity: 1; }
 
     #chat-container {
       flex: 1;
@@ -122,7 +134,10 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
-  <header>医療データアシスタント</header>
+  <header>
+    <span>医療データアシスタント</span>
+    <a href="/upload">アップロード →</a>
+  </header>
 
   <div id="chat-container"></div>
 

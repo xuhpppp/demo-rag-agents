@@ -215,5 +215,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# CSV files
+# CSV files and uploaded files
 output/*
+uploads/*
