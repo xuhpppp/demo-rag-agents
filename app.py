@@ -6,17 +6,20 @@ from fastapi import FastAPI, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from langchain_aws import ChatBedrock
+from langchain_chroma import Chroma
 from langchain_core.tools import tool
 from langchain.agents import create_agent
 
 from agents.synthea_sql_agent import create_sql_agent
+from agents.rag_agent import create_rag_agent
 from queue_manager import file_queue, FileJob
 from consumer import consume
 
 load_dotenv()
 
-# Initialize the SQL sub-agent
+# Initialize sub-agents
 sql_agent = create_sql_agent()
+rag_agent = create_rag_agent()
 
 
 @tool
@@ -26,6 +29,16 @@ def query_synthea_database(question: str) -> str:
     medications, encounters, or any healthcare-related data stored in the database.
     """
     result = sql_agent.invoke({"messages": [{"role": "user", "content": question}]})
+    return result["messages"][-1].content
+
+
+@tool
+def search_medical_guidelines(question: str) -> str:
+    """Search medical guidelines and protocols from uploaded documents.
+    Use this tool when the user asks about healthcare guidelines, treatment protocols,
+    clinical recommendations, or medical standards from the knowledge base.
+    """
+    result = rag_agent.invoke({"messages": [{"role": "user", "content": question}]})
     return result["messages"][-1].content
 
 
@@ -40,14 +53,23 @@ orchestrator_model = ChatBedrock(
 # Create orchestrator agent
 orchestrator = create_agent(
     model=orchestrator_model,
-    tools=[query_synthea_database],
-    system_prompt="""You are a helpful healthcare data assistant.
-You can answer questions about patient data by querying the Synthea database.
+    tools=[query_synthea_database, search_medical_guidelines],
+    system_prompt="""You are a helpful healthcare data assistant with access to two tools:
 
-When the user asks about patients, conditions, medications, encounters,
-or any healthcare data, use the query_synthea_database tool.
+1. **query_synthea_database** - Query the Synthea patient database for actual patient data,
+   conditions, medications, encounters, and healthcare statistics.
+2. **search_medical_guidelines** - Search uploaded medical guidelines and protocols for
+   clinical recommendations, treatment standards, and healthcare policies.
 
-For general questions not related to the database, answer directly.
+Use query_synthea_database when the user asks about patient data or database statistics.
+Use search_medical_guidelines when the user asks about guidelines, protocols, or recommendations.
+Use BOTH tools when the user wants to compare guidelines with actual patient data.
+
+When your answer includes information from medical guidelines, preserve the inline
+citations exactly as returned by the search_medical_guidelines tool (e.g. [filename.txt]).
+Include a "Sources" section at the end listing all cited documents.
+
+For general questions not related to the database or guidelines, answer directly.
 
 When presenting tabular data, you MUST use proper markdown table syntax with a header
 separator row. Example:
@@ -102,31 +124,6 @@ async def upload_file(file: UploadFile):
     return {"filename": file.filename}
 
 
-@app.get("/vectors")
-def vectors_count():
-    from consumer import parent_collection, child_collection
-    return {
-        "parent_chunks": parent_collection.count(),
-        "child_chunks": child_collection.count(),
-    }
-
-
-@app.delete("/vectors")
-def vectors_clear():
-    from consumer import chroma_client, bedrock_ef, parent_collection, child_collection
-    import consumer
-
-    chroma_client.delete_collection("parent_chunks")
-    chroma_client.delete_collection("child_chunks")
-    consumer.parent_collection = chroma_client.get_or_create_collection(
-        "parent_chunks", embedding_function=bedrock_ef
-    )
-    consumer.child_collection = chroma_client.get_or_create_collection(
-        "child_chunks", embedding_function=bedrock_ef
-    )
-    return {"status": "cleared"}
-
-
 @app.post("/chat")
 def chat(req: ChatRequest):
     def generate():
@@ -143,3 +140,18 @@ def chat(req: ChatRequest):
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.delete("/vectors")
+def vectors_clear():
+    from consumer import chroma_client, embeddings
+    import consumer
+
+    chroma_client.delete_collection("example_collection")
+    consumer.vector_store = Chroma(
+        client=chroma_client,
+        collection_name="example_collection",
+        embedding_function=embeddings,
+        collection_metadata={"hnsw:space": "cosine"},
+    )
+    return {"status": "cleared"}
