@@ -14,6 +14,7 @@ from langfuse.langchain import CallbackHandler
 
 from agents.synthea_sql_agent import create_sql_agent
 from agents.rag_agent import create_rag_agent
+from agents.single_agent import create_single_agent
 from queue_manager import file_queue, FileJob
 from consumer import consume
 
@@ -61,6 +62,9 @@ orchestrator_model = ChatBedrock(
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
     region_name=os.getenv("AWS_REGION"),
 )
+
+# Create single agent (all tools in one agent)
+single_agent = create_single_agent()
 
 # Create orchestrator agent
 orchestrator = create_agent(
@@ -110,6 +114,7 @@ async def shutdown():
 
 class ChatRequest(BaseModel):
     message: str
+    agent: str = "orchestrator"
 
 
 UPLOAD_DIR = "uploads"
@@ -144,8 +149,10 @@ async def upload_file(file: UploadFile):
 
 @app.post("/chat")
 def chat(req: ChatRequest):
+    active_agent = single_agent if req.agent == "single" else orchestrator
+
     def generate():
-        for chunk, metadata in orchestrator.stream(
+        for chunk, metadata in active_agent.stream(
             {"messages": [{"role": "user", "content": req.message}]},
             stream_mode="messages",
             config={"callbacks": [langfuse_handler]},

@@ -114,6 +114,58 @@
     .message.assistant pre { background: #f0f0f0; padding: 10px; border-radius: 6px; overflow-x: auto; margin: 4px 0; }
     .message.assistant pre code { background: none; padding: 0; }
 
+    /* Agent selector */
+    #agent-selector {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      padding: 24px;
+    }
+
+    #agent-selector p {
+      font-size: 18px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    #agent-buttons {
+      display: flex;
+      gap: 20px;
+    }
+
+    .agent-btn {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 24px 32px;
+      border: 2px solid #ddd;
+      border-radius: 12px;
+      background: #fff;
+      cursor: pointer;
+      width: 280px;
+      text-align: left;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .agent-btn:hover {
+      border-color: #1a73e8;
+      box-shadow: 0 2px 8px rgba(26, 115, 232, 0.15);
+    }
+
+    .agent-btn strong {
+      font-size: 16px;
+      color: #1a73e8;
+    }
+
+    .agent-btn span {
+      font-size: 13px;
+      color: #666;
+      line-height: 1.4;
+    }
+
     /* Typing dots animation */
     .dots-indicator {
       display: inline;
@@ -139,17 +191,44 @@
     <a href="/upload">アップロード →</a>
   </header>
 
-  <div id="chat-container"></div>
+  <div id="agent-selector">
+    <p>使用するエージェントを選択してください:</p>
+    <div id="agent-buttons">
+      <button class="agent-btn" data-agent="orchestrator">
+        <strong>Orchestrator</strong>
+        <span>オーケストレーターが質問を分析し、専門のサブエージェント（SQL / RAG）に振り分けます</span>
+      </button>
+      <button class="agent-btn" data-agent="single">
+        <strong>Single Agent</strong>
+        <span>1つのエージェントがSQL・RAGの全ツールを直接使用します（低レイテンシ）</span>
+      </button>
+    </div>
+  </div>
 
-  <div id="input-area">
+  <div id="chat-container" style="display:none;"></div>
+
+  <div id="input-area" style="display:none;">
     <input id="message-input" type="text" placeholder="患者データについて質問してください..." autocomplete="off">
     <button id="send-btn">送信</button>
   </div>
 
   <script>
+    const agentSelector = document.getElementById("agent-selector");
     const chatContainer = document.getElementById("chat-container");
+    const inputArea = document.getElementById("input-area");
     const input = document.getElementById("message-input");
     const sendBtn = document.getElementById("send-btn");
+    let selectedAgent = null;
+
+    document.querySelectorAll(".agent-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        selectedAgent = btn.dataset.agent;
+        agentSelector.style.display = "none";
+        chatContainer.style.display = "flex";
+        inputArea.style.display = "flex";
+        input.focus();
+      });
+    });
 
     function addMessage(role, text) {
       const div = document.createElement("div");
@@ -197,7 +276,7 @@
         const res = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text }),
+          body: JSON.stringify({ message: text, agent: selectedAgent }),
         });
 
         const reader = res.body.getReader();

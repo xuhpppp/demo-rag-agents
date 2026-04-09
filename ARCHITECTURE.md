@@ -2,10 +2,17 @@
 
 ## Overview
 
-A multi-agent system built with LangGraph and LangChain, using Claude on AWS Bedrock as the LLM. The orchestrator agent receives user questions and delegates to specialized sub-agents via tools. The system combines a SQL agent for querying patient data with a RAG agent for searching medical guidelines, enabling questions that span both real data and clinical knowledge.
+A healthcare data system built with LangGraph and LangChain, using Claude on AWS Bedrock as the LLM. Users choose between two agent modes at the start of each chat session:
+
+- **Orchestrator mode** — A multi-agent architecture where an orchestrator delegates to specialized sub-agents (SQL and RAG) via tools. Better separation of concerns; each sub-agent has a focused prompt.
+- **Single agent mode** — One agent with all tools (SQL toolkit + RAG search) directly. Fewer LLM round-trips, lower latency.
+
+Both modes combine SQL querying of patient data with RAG search over medical guidelines.
+
+### Orchestrator Mode
 
 ```
-User
+User → selects "Orchestrator" in chat UI
  │
  ▼
 Orchestrator Agent (app.py)
@@ -42,6 +49,25 @@ Orchestrator Agent (app.py)
                   (cosine similarity, score threshold 0.3)
 ```
 
+### Single Agent Mode
+
+```
+User → selects "Single Agent" in chat UI
+ │
+ ▼
+Single Agent (agents/single_agent.py)
+ │   Claude Sonnet 4.6 via Bedrock
+ │   Has direct access to all tools — no sub-agents
+ │
+ ├──► SQLDatabaseToolkit
+ │         ├── sql_db_list_tables
+ │         ├── sql_db_schema
+ │         ├── sql_db_query_checker
+ │         └── sql_db_query ──► Synthea MySQL Database
+ │
+ └──► search_medical_guidelines ──► ChromaDB Vector Store
+```
+
 ### Document Ingestion Pipeline
 
 ```
@@ -65,17 +91,30 @@ ChromaDB (example_collection)
 
 ## Components
 
-### Orchestrator (`app.py`)
+### App (`app.py`)
 
 - Entry point for user interaction via FastAPI
-- Routes questions to the appropriate sub-agent tool(s)
-- Can call both tools in a single turn when the user wants to compare guidelines with actual patient data
-- Preserves inline citations from the RAG agent in its final response
+- Initializes both agent modes (orchestrator + single) at startup
+- The `/chat` endpoint accepts an `agent` field (`"orchestrator"` or `"single"`) to select which mode handles the request
 - Streams the final response token-by-token to the user via SSE
 - All agent invocations are traced via Langfuse `CallbackHandler` for observability
 
+### Orchestrator Agent (`app.py`)
+
+- Routes questions to the appropriate sub-agent tool(s)
+- Can call both tools in a single turn when the user wants to compare guidelines with actual patient data
+- Preserves inline citations from the RAG agent in its final response
+
+### Single Agent (`agents/single_agent.py`)
+
+- One agent with all 5 tools: SQLDatabaseToolkit (4 tools) + `search_medical_guidelines`
+- Fewer LLM round-trips than orchestrator mode (no routing/synthesis overhead)
+- Combined system prompt covers both SQL and RAG behaviors
+- Exposed via `create_single_agent()` factory function
+
 ### SQL Sub-Agent (`agents/synthea_sql_agent.py`)
 
+- Used by orchestrator mode only
 - Specialized agent for querying the Synthea patient database
 - Follows a fixed reasoning loop: list tables → inspect schema → validate SQL → execute → summarize
 - Read-only: DML statements (INSERT, UPDATE, DELETE, DROP) are prohibited by its system prompt
@@ -83,6 +122,7 @@ ChromaDB (example_collection)
 
 ### RAG Sub-Agent (`agents/rag_agent.py`)
 
+- Used by orchestrator mode only
 - Specialized agent for answering questions using uploaded medical guideline documents
 - Searches ChromaDB via cosine similarity with a relevance score threshold
 - Synthesizes answers from retrieved document chunks with inline citations (e.g. `[filename.txt]`)
@@ -119,7 +159,7 @@ All services are defined in `docker-compose.yml` with persistent named volumes. 
 | `GET` | `/` | Serves the chat UI |
 | `GET` | `/upload` | Serves the document upload page |
 | `POST` | `/upload` | Uploads a `.txt` file and enqueues it for embedding |
-| `POST` | `/chat` | Streams an SSE response from the orchestrator agent |
+| `POST` | `/chat` | Streams an SSE response from the selected agent (`agent`: `"orchestrator"` or `"single"`) |
 | `DELETE` | `/vectors` | Clears the ChromaDB collection and recreates it |
 
 ## Adding a New Sub-Agent
