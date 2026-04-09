@@ -34,6 +34,7 @@ def search_medical_guidelines(query: str) -> str:
 def create_rag_agent():
     model = ChatBedrock(
         model="jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+        max_tokens=10024,
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
         region_name=os.getenv("AWS_REGION"),
@@ -56,6 +57,7 @@ When answering:
 - You may answer in the same language as the user's question."""
 
     return create_agent(
+        debug=True,
         model=model,
         tools=[search_medical_guidelines],
         system_prompt=system_prompt,

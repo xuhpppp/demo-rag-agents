@@ -32,14 +32,14 @@ Orchestrator Agent (app.py)
            │
            ▼
       RAG Sub-Agent (agents/rag_agent.py)
-           │   Claude Sonnet 4.6 via Bedrock
+           │   Claude Haiku 4.5 via Bedrock
            │   Retrieves relevant guidelines → synthesizes answer with citations
            │
            └──► search_medical_guidelines (internal tool)
                          │
                          ▼
                   ChromaDB Vector Store
-                  (cosine similarity, score threshold 0.5)
+                  (cosine similarity, score threshold 0.3)
 ```
 
 ### Document Ingestion Pipeline
@@ -55,7 +55,7 @@ FileQueue (queue_manager.py)
 Consumer (consumer.py)
  │   Background task started on app startup
  │   Loads .txt → splits into chunks (1000 chars, 200 overlap)
- │   Embeds with Amazon Titan Embed Text v2
+ │   Embeds with Cohere Embed v4
  │
  ▼
 ChromaDB (example_collection)
@@ -100,7 +100,7 @@ ChromaDB (example_collection)
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
 | MySQL | `mysql:8.0.40` | 3306 | Primary database — stores all Synthea patient data |
-| ChromaDB | `chromadb/chroma` | 8000 | Vector database — stores document embeddings for RAG (cosine distance) |
+| ChromaDB | `chromadb/chroma:1.5.5` | 8001 | Vector database — stores document embeddings for RAG (cosine distance) |
 
 Both services are defined in `docker-compose.yml` with persistent named volumes.
 

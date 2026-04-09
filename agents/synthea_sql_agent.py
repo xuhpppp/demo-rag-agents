@@ -13,6 +13,7 @@ load_dotenv()
 def create_sql_agent():
     model = ChatBedrock(
         model="jp.anthropic.claude-sonnet-4-6",
+        max_tokens=10024,
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
         region_name=os.getenv("AWS_REGION"),
@@ -52,6 +53,7 @@ Then you should query the schema of the most relevant tables.
     )
 
     return create_agent(
+        debug=True,
         model=model,
         tools=tools,
         system_prompt=system_prompt,
