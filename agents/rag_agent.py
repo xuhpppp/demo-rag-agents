@@ -1,11 +1,10 @@
 import os
+import consumer
 
 from dotenv import load_dotenv
 from langchain_aws import ChatBedrock
 from langchain_core.tools import tool
 from langchain.agents import create_agent
-
-from consumer import vector_store
 
 
 load_dotenv()
@@ -17,8 +16,8 @@ def search_medical_guidelines(query: str) -> str:
     Use this tool to find guidelines, protocols, and recommendations from
     uploaded medical documents stored in the vector database.
     """
-    results = vector_store.similarity_search_with_relevance_scores(
-        query=query, k=5, score_threshold=0.5
+    results = consumer.vector_store.similarity_search_with_relevance_scores(
+        query=query, k=3, score_threshold=0.3
     )
     if not results:
         return "No relevant guidelines found for this query."
@@ -34,7 +33,7 @@ def search_medical_guidelines(query: str) -> str:
 
 def create_rag_agent():
     model = ChatBedrock(
-        model="jp.anthropic.claude-sonnet-4-6",
+        model="jp.anthropic.claude-haiku-4-5-20251001-v1:0",
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
         region_name=os.getenv("AWS_REGION"),

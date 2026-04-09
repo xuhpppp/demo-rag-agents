@@ -2,7 +2,7 @@
 
 ## Overview
 
-A multi-agent system built with LangGraph and LangChain, using Claude on AWS Bedrock as the LLM. The orchestrator agent receives user questions and delegates to specialized sub-agents via tools.
+A multi-agent system built with LangGraph and LangChain, using Claude on AWS Bedrock as the LLM. The orchestrator agent receives user questions and delegates to specialized sub-agents via tools. The system combines a SQL agent for querying patient data with a RAG agent for searching medical guidelines, enabling questions that span both real data and clinical knowledge.
 
 ```
 User
@@ -12,50 +12,111 @@ Orchestrator Agent (app.py)
  │   Claude Sonnet 4.6 via Bedrock
  │   Decides which tool(s) to call based on the question
  │
- └──► query_synthea_database (tool)
+ ├──► query_synthea_database (tool)
+ │         │
+ │         ▼
+ │    SQL Sub-Agent (agents/synthea_sql_agent.py)
+ │         │   Claude Sonnet 4.6 via Bedrock
+ │         │   Translates natural language → SQL → executes → summarizes
+ │         │
+ │         └──► SQLDatabaseToolkit
+ │                   ├── sql_db_list_tables   — discover available tables
+ │                   ├── sql_db_schema        — inspect table structure
+ │                   ├── sql_db_query_checker — validate SQL before running
+ │                   └── sql_db_query         — execute SQL against MySQL
+ │                              │
+ │                              ▼
+ │                       Synthea MySQL Database
+ │
+ └──► search_medical_guidelines (tool)
            │
            ▼
-      SQL Sub-Agent (agents/synthea_sql_agent.py)
+      RAG Sub-Agent (agents/rag_agent.py)
            │   Claude Sonnet 4.6 via Bedrock
-           │   Translates natural language → SQL → executes → summarizes
+           │   Retrieves relevant guidelines → synthesizes answer with citations
            │
-           └──► SQLDatabaseToolkit
-                     ├── sql_db_list_tables   — discover available tables
-                     ├── sql_db_schema        — inspect table structure
-                     ├── sql_db_query_checker — validate SQL before running
-                     └── sql_db_query         — execute SQL against MySQL
-                                │
-                                ▼
-                         Synthea MySQL Database
+           └──► search_medical_guidelines (internal tool)
+                         │
+                         ▼
+                  ChromaDB Vector Store
+                  (cosine similarity, score threshold 0.5)
+```
+
+### Document Ingestion Pipeline
+
+```
+User uploads .txt via /upload
+ │
+ ▼
+FileQueue (queue_manager.py)
+ │   Async queue of FileJob objects
+ │
+ ▼
+Consumer (consumer.py)
+ │   Background task started on app startup
+ │   Loads .txt → splits into chunks (1000 chars, 200 overlap)
+ │   Embeds with Amazon Titan Embed Text v2
+ │
+ ▼
+ChromaDB (example_collection)
+ │   Cosine distance metric
+ │   Persistent via HTTP client → Docker container
 ```
 
 ## Components
 
 ### Orchestrator (`app.py`)
 
-- Entry point for user interaction
-- Routes questions to the appropriate sub-agent tool
-- Answers general questions directly without delegating
-- Streams the final response token-by-token to the user
+- Entry point for user interaction via FastAPI
+- Routes questions to the appropriate sub-agent tool(s)
+- Can call both tools in a single turn when the user wants to compare guidelines with actual patient data
+- Preserves inline citations from the RAG agent in its final response
+- Streams the final response token-by-token to the user via SSE
 
 ### SQL Sub-Agent (`agents/synthea_sql_agent.py`)
 
 - Specialized agent for querying the Synthea patient database
 - Follows a fixed reasoning loop: list tables → inspect schema → validate SQL → execute → summarize
 - Read-only: DML statements (INSERT, UPDATE, DELETE, DROP) are prohibited by its system prompt
-- Exposed via `create_sql_agent()` for import by the orchestrator, and runnable standalone via `python -m agents.synthea_sql_agent`
+- Exposed via `create_sql_agent()` factory function
+
+### RAG Sub-Agent (`agents/rag_agent.py`)
+
+- Specialized agent for answering questions using uploaded medical guideline documents
+- Searches ChromaDB via cosine similarity with a relevance score threshold
+- Synthesizes answers from retrieved document chunks with inline citations (e.g. `[filename.txt]`)
+- Includes a "Sources" section at the end of each response
+- Exposed via `create_rag_agent()` factory function
+
+### Document Consumer (`consumer.py`)
+
+- Background async task that continuously processes the file upload queue
+- Loads `.txt` files, splits them into chunks using `RecursiveCharacterTextSplitter`
+- Embeds chunks with Amazon Titan Embed Text v2 and stores them in ChromaDB
+- The `vector_store` object is shared with the RAG agent for retrieval
 
 ## Infrastructure
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
 | MySQL | `mysql:8.0.40` | 3306 | Primary database — stores all Synthea patient data |
-| ChromaDB | `chromadb:1.5.5` | 8001 | Vector database — stores document embeddings for RAG |
+| ChromaDB | `chromadb/chroma` | 8000 | Vector database — stores document embeddings for RAG (cosine distance) |
 
 Both services are defined in `docker-compose.yml` with persistent named volumes.
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Serves the chat UI |
+| `GET` | `/upload` | Serves the document upload page |
+| `POST` | `/upload` | Uploads a `.txt` file and enqueues it for embedding |
+| `POST` | `/chat` | Streams an SSE response from the orchestrator agent |
+| `DELETE` | `/vectors` | Clears the ChromaDB collection and recreates it |
 
 ## Adding a New Sub-Agent
 
 1. Create `agents/your_agent.py` with a `create_your_agent()` factory function
-2. In `main.py`, wrap it as a `@tool` with a clear docstring (the orchestrator uses the docstring to decide when to call it)
+2. In `app.py`, import it and wrap as a `@tool` with a clear docstring (the orchestrator uses the docstring to decide when to call it)
 3. Add the tool to the orchestrator's `tools=[...]` list
+4. Update the orchestrator's system prompt to describe when to use the new tool

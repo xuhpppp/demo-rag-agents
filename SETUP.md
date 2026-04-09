@@ -32,13 +32,15 @@ The script will:
 
 > This may take several minutes depending on your machine and network speed.
 
-## 3. Start MySQL with Docker
+## 3. Start MySQL and ChromaDB with Docker
 
 ```bash
 docker compose up -d
 ```
 
-This starts a MySQL 8.0 container (`demo_rag_mysql`) with:
+This starts two containers:
+
+**MySQL 8.0** (`demo_rag_mysql`):
 
 | Setting | Value |
 |---------|-------|
@@ -48,6 +50,15 @@ This starts a MySQL 8.0 container (`demo_rag_mysql`) with:
 | App user | `rag_user` |
 | App password | `rag_password` |
 | Default database | `rag_db` |
+
+**ChromaDB** (vector database for RAG):
+
+| Setting | Value |
+|---------|-------|
+| Host | `localhost` |
+| Port | `8000` |
+| Collection | `example_collection` |
+| Distance metric | `cosine` |
 
 ## 4. Set up the Python virtual environment
 
@@ -108,7 +119,15 @@ Done! All data loaded into synthea_db.
 
 Total: ~3 million rows across 18 tables.
 
-## 7. Verify the setup
+## 7. Run the application
+
+```bash
+uvicorn app:app --reload
+```
+
+The app will be available at `http://localhost:8000`.
+
+## 8. Verify the database
 
 Connect to the database and run a quick check:
 
@@ -128,11 +147,23 @@ print(cur.fetchone())  # (1195,)
 conn.close()
 ```
 
+## 9. Upload RAG documents
+
+Navigate to `http://localhost:8000/upload` and upload the `.txt` files from `rag_documents/`. These will be chunked, embedded, and stored in ChromaDB automatically via the background consumer.
+
 ## Project Structure
 
 ```
 demo_rag_agents/
-├── docker-compose.yml        # MySQL 8.0 container definition
+├── app.py                    # FastAPI server, orchestrator agent
+├── consumer.py               # Background document ingestion (queue → chunk → embed → ChromaDB)
+├── queue_manager.py          # Async file job queue
+├── agents/
+│   ├── synthea_sql_agent.py  # SQL sub-agent for querying patient data
+│   └── rag_agent.py          # RAG sub-agent for searching medical guidelines
+├── rag_documents/            # Japanese medical guideline .txt files for RAG
+├── static/                   # Chat and upload web UI
+├── docker-compose.yml        # MySQL + ChromaDB container definitions
 ├── script/
 │   ├── init_db.sql           # Database schema (18 tables)
 │   └── load_data.py          # CSV → MySQL loader script
@@ -141,6 +172,9 @@ demo_rag_agents/
 │   ├── encounters.csv
 │   ├── observations.csv
 │   └── ... (18 CSV files)
+├── requirements.txt          # Python dependencies
+├── ARCHITECTURE.md           # System architecture documentation
+├── SCHEMA.md                 # Database schema documentation
 ├── database_structure.md     # Detailed schema documentation (Japanese)
 ├── SETUP.md                  # This file
 └── .venv/                    # Python virtual environment

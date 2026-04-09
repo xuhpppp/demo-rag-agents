@@ -18,7 +18,7 @@ load_dotenv()
 embeddings = BedrockEmbeddings(
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-    model_id="amazon.titan-embed-text-v2:0",
+    model_id="cohere.embed-v4:0",
     region_name=os.getenv("AWS_REGION"),
 )
 
