@@ -6,6 +6,7 @@ from fastapi import FastAPI, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from langchain_aws import ChatBedrock
+from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
 from langchain_core.tools import tool
 from langchain.agents import create_agent
@@ -23,55 +24,38 @@ load_dotenv()
 # Initialize Langfuse callback handler for tracing
 langfuse_handler = CallbackHandler()
 
-# Initialize sub-agents
-sql_agent = create_sql_agent()
-rag_agent = create_rag_agent()
 
+# ---------------------------------------------------------------------------
+# Model factories
+# ---------------------------------------------------------------------------
 
-@tool
-def query_synthea_database(question: str) -> str:
-    """Query the Synthea patient database using natural language.
-    Use this tool when the user asks about patient data, conditions,
-    medications, encounters, or any healthcare-related data stored in the database.
-    """
-    result = sql_agent.invoke(
-        {"messages": [{"role": "user", "content": question}]},
-        config={"callbacks": [langfuse_handler]},
+def get_bedrock_model(role="default"):
+    kwargs = dict(
+        max_tokens=10024,
+        streaming=True,
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name=os.getenv("AWS_REGION"),
     )
-    return result["messages"][-1].content
+    if role == "light":
+        return ChatBedrock(model="jp.anthropic.claude-haiku-4-5-20251001-v1:0", **kwargs)
+    return ChatBedrock(model="jp.anthropic.claude-sonnet-4-6", **kwargs)
 
 
-@tool
-def search_medical_guidelines(question: str) -> str:
-    """Search medical guidelines and protocols from uploaded documents.
-    Use this tool when the user asks about healthcare guidelines, treatment protocols,
-    clinical recommendations, or medical standards from the knowledge base.
-    """
-    result = rag_agent.invoke(
-        {"messages": [{"role": "user", "content": question}]},
-        config={"callbacks": [langfuse_handler]},
+def get_openai_model():
+    return ChatOpenAI(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        streaming=True,
+        model="gpt-5.4-mini-2026-03-17",
+        max_tokens=10024,
     )
-    return result["messages"][-1].content
 
 
-# Initialize the orchestrator model
-orchestrator_model = ChatBedrock(
-    model="jp.anthropic.claude-sonnet-4-6",
-    max_tokens=10024,
-    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-    region_name=os.getenv("AWS_REGION"),
-)
+# ---------------------------------------------------------------------------
+# Orchestrator prompt (shared across providers)
+# ---------------------------------------------------------------------------
 
-# Create single agent (all tools in one agent)
-single_agent = create_single_agent()
-
-# Create orchestrator agent
-orchestrator = create_agent(
-    debug=True,
-    model=orchestrator_model,
-    tools=[query_synthea_database, search_medical_guidelines],
-    system_prompt="""You are a helpful healthcare data assistant with access to two tools:
+ORCHESTRATOR_PROMPT = """You are a helpful healthcare data assistant with access to two tools:
 
 1. **query_synthea_database** - Query the Synthea patient database for actual patient data,
    conditions, medications, encounters, and healthcare statistics.
@@ -95,8 +79,70 @@ separator row. Example:
 |----------|----------|
 | value 1  | value 2  |
 
-Never use pipe characters for anything other than markdown tables.""",
-)
+Never use pipe characters for anything other than markdown tables."""
+
+
+# ---------------------------------------------------------------------------
+# Lazy agent cache — agents are created on first request per provider
+# ---------------------------------------------------------------------------
+
+_agent_cache = {}
+
+
+def _build_orchestrator(provider):
+    if provider == "bedrock":
+        orch_model = get_bedrock_model()
+        sql_model = get_bedrock_model()
+        rag_model = get_bedrock_model("light")
+    else:
+        orch_model = get_openai_model()
+        sql_model = get_openai_model()
+        rag_model = get_openai_model()
+
+    sql_sub = create_sql_agent(sql_model)
+    rag_sub = create_rag_agent(rag_model)
+
+    @tool
+    def query_synthea_database(question: str) -> str:
+        """Query the Synthea patient database using natural language.
+        Use this tool when the user asks about patient data, conditions,
+        medications, encounters, or any healthcare-related data stored in the database.
+        """
+        result = sql_sub.invoke(
+            {"messages": [{"role": "user", "content": question}]},
+            config={"callbacks": [langfuse_handler]},
+        )
+        return result["messages"][-1].content
+
+    @tool
+    def search_medical_guidelines(question: str) -> str:
+        """Search medical guidelines and protocols from uploaded documents.
+        Use this tool when the user asks about healthcare guidelines, treatment protocols,
+        clinical recommendations, or medical standards from the knowledge base.
+        """
+        result = rag_sub.invoke(
+            {"messages": [{"role": "user", "content": question}]},
+            config={"callbacks": [langfuse_handler]},
+        )
+        return result["messages"][-1].content
+
+    return create_agent(
+        debug=True,
+        model=orch_model,
+        tools=[query_synthea_database, search_medical_guidelines],
+        system_prompt=ORCHESTRATOR_PROMPT,
+    )
+
+
+def get_agent(provider: str, agent_type: str):
+    key = f"{provider}:{agent_type}"
+    if key not in _agent_cache:
+        if agent_type == "orchestrator":
+            _agent_cache[key] = _build_orchestrator(provider)
+        else:
+            model = get_bedrock_model() if provider == "bedrock" else get_openai_model()
+            _agent_cache[key] = create_single_agent(model)
+    return _agent_cache[key]
 
 app = FastAPI()
 
@@ -115,6 +161,7 @@ async def shutdown():
 class ChatRequest(BaseModel):
     message: str
     agent: str = "orchestrator"
+    provider: str = "openai"
 
 
 UPLOAD_DIR = "uploads"
@@ -149,7 +196,7 @@ async def upload_file(file: UploadFile):
 
 @app.post("/chat")
 def chat(req: ChatRequest):
-    active_agent = single_agent if req.agent == "single" else orchestrator
+    active_agent = get_agent(req.provider, req.agent)
 
     def generate():
         for chunk, metadata in active_agent.stream(
@@ -157,12 +204,13 @@ def chat(req: ChatRequest):
             stream_mode="messages",
             config={"callbacks": [langfuse_handler]},
         ):
-            if metadata["langgraph_node"] == "model" and isinstance(
-                chunk.content, list
-            ):
-                for block in chunk.content:
-                    if block.get("type") == "text":
-                        yield f"data: {json.dumps(block['text'])}\n\n"
+            if metadata["langgraph_node"] == "model":
+                if isinstance(chunk.content, list):
+                    for block in chunk.content:
+                        if block.get("type") == "text":
+                            yield f"data: {json.dumps(block['text'])}\n\n"
+                elif isinstance(chunk.content, str) and chunk.content:
+                    yield f"data: {json.dumps(chunk.content)}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")

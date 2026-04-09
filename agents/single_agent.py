@@ -3,7 +3,6 @@ import os
 import consumer
 
 from dotenv import load_dotenv
-from langchain_aws import ChatBedrock
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_core.tools import tool
@@ -34,14 +33,7 @@ def search_medical_guidelines(query: str) -> str:
     return "\n\n---\n\n".join(formatted)
 
 
-def create_single_agent():
-    model = ChatBedrock(
-        model="jp.anthropic.claude-sonnet-4-6",
-        max_tokens=10024,
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        region_name=os.getenv("AWS_REGION"),
-    )
+def create_single_agent(model):
 
     db = SQLDatabase.from_uri(
         f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"

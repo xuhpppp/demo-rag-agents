@@ -1,13 +1,8 @@
 import os
 import consumer
 
-from dotenv import load_dotenv
-from langchain_aws import ChatBedrock
 from langchain_core.tools import tool
 from langchain.agents import create_agent
-
-
-load_dotenv()
 
 
 @tool
@@ -31,14 +26,7 @@ def search_medical_guidelines(query: str) -> str:
     return "\n\n---\n\n".join(formatted)
 
 
-def create_rag_agent():
-    model = ChatBedrock(
-        model="jp.anthropic.claude-haiku-4-5-20251001-v1:0",
-        max_tokens=10024,
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        region_name=os.getenv("AWS_REGION"),
-    )
+def create_rag_agent(model):
 
     system_prompt = """You are a medical guidelines assistant. Your role is to answer
 questions about healthcare guidelines, protocols, and recommendations using the

@@ -114,56 +114,96 @@
     .message.assistant pre { background: #f0f0f0; padding: 10px; border-radius: 6px; overflow-x: auto; margin: 4px 0; }
     .message.assistant pre code { background: none; padding: 0; }
 
-    /* Agent selector */
-    #agent-selector {
+    /* Setup selector */
+    #setup-selector {
       flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 24px;
+      gap: 28px;
       padding: 24px;
     }
 
-    #agent-selector p {
-      font-size: 18px;
+    .setup-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .setup-group p {
+      font-size: 16px;
       font-weight: 600;
       color: #333;
     }
 
-    #agent-buttons {
+    .setup-options {
       display: flex;
-      gap: 20px;
+      gap: 16px;
     }
 
-    .agent-btn {
+    .option-btn {
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      padding: 24px 32px;
+      gap: 6px;
+      padding: 18px 24px;
       border: 2px solid #ddd;
       border-radius: 12px;
       background: #fff;
       cursor: pointer;
-      width: 280px;
+      width: 260px;
       text-align: left;
       transition: border-color 0.2s, box-shadow 0.2s;
     }
 
-    .agent-btn:hover {
+    .option-btn:hover {
       border-color: #1a73e8;
       box-shadow: 0 2px 8px rgba(26, 115, 232, 0.15);
     }
 
-    .agent-btn strong {
-      font-size: 16px;
+    .option-btn.selected {
+      border-color: #1a73e8;
+      background: #e8f0fe;
+      box-shadow: 0 2px 8px rgba(26, 115, 232, 0.15);
+    }
+
+    .option-btn strong {
+      font-size: 15px;
       color: #1a73e8;
     }
 
-    .agent-btn span {
-      font-size: 13px;
+    .option-btn span {
+      font-size: 12px;
       color: #666;
       line-height: 1.4;
+    }
+
+    #start-btn {
+      padding: 14px 48px;
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #start-btn:disabled {
+      background: #94bdf2;
+      cursor: not-allowed;
+    }
+
+    #start-btn:not(:disabled):hover {
+      background: #1557b0;
+    }
+
+    #chat-badge {
+      font-size: 12px;
+      opacity: 0.85;
+      font-weight: 400;
     }
 
     /* Typing dots animation */
@@ -191,18 +231,36 @@
     <a href="/upload">アップロード →</a>
   </header>
 
-  <div id="agent-selector">
-    <p>使用するエージェントを選択してください:</p>
-    <div id="agent-buttons">
-      <button class="agent-btn" data-agent="orchestrator">
-        <strong>Orchestrator</strong>
-        <span>オーケストレーターが質問を分析し、専門のサブエージェント（SQL / RAG）に振り分けます</span>
-      </button>
-      <button class="agent-btn" data-agent="single">
-        <strong>Single Agent</strong>
-        <span>1つのエージェントがSQL・RAGの全ツールを直接使用します（低レイテンシ）</span>
-      </button>
+  <div id="setup-selector">
+    <div class="setup-group">
+      <p>モデルを選択してください:</p>
+      <div class="setup-options">
+        <button class="option-btn" data-group="provider" data-value="bedrock">
+          <strong>AWS Bedrock (Claude)</strong>
+          <span>Anthropic Claude — Sonnet 4.6 / Haiku 4.5 via AWS Bedrock</span>
+        </button>
+        <button class="option-btn" data-group="provider" data-value="openai">
+          <strong>OpenAI (GPT)</strong>
+          <span>OpenAI GPT-5.4 Mini</span>
+        </button>
+      </div>
     </div>
+
+    <div class="setup-group">
+      <p>エージェントタイプを選択してください:</p>
+      <div class="setup-options">
+        <button class="option-btn" data-group="agent" data-value="orchestrator">
+          <strong>Orchestrator</strong>
+          <span>オーケストレーターが質問を分析し、専門のサブエージェント（SQL / RAG）に振り分けます</span>
+        </button>
+        <button class="option-btn" data-group="agent" data-value="single">
+          <strong>Single Agent</strong>
+          <span>1つのエージェントがSQL・RAGの全ツールを直接使用します（低レイテンシ）</span>
+        </button>
+      </div>
+    </div>
+
+    <button id="start-btn" disabled>チャットを開始</button>
   </div>
 
   <div id="chat-container" style="display:none;"></div>
@@ -213,21 +271,35 @@
   </div>
 
   <script>
-    const agentSelector = document.getElementById("agent-selector");
+    const setupSelector = document.getElementById("setup-selector");
     const chatContainer = document.getElementById("chat-container");
     const inputArea = document.getElementById("input-area");
     const input = document.getElementById("message-input");
     const sendBtn = document.getElementById("send-btn");
+    const startBtn = document.getElementById("start-btn");
+    let selectedProvider = null;
     let selectedAgent = null;
 
-    document.querySelectorAll(".agent-btn").forEach(btn => {
+    document.querySelectorAll(".option-btn").forEach(btn => {
       btn.addEventListener("click", () => {
-        selectedAgent = btn.dataset.agent;
-        agentSelector.style.display = "none";
-        chatContainer.style.display = "flex";
-        inputArea.style.display = "flex";
-        input.focus();
+        const group = btn.dataset.group;
+        document.querySelectorAll(`.option-btn[data-group="${group}"]`).forEach(b => b.classList.remove("selected"));
+        btn.classList.add("selected");
+        if (group === "provider") selectedProvider = btn.dataset.value;
+        if (group === "agent") selectedAgent = btn.dataset.value;
+        startBtn.disabled = !(selectedProvider && selectedAgent);
       });
+    });
+
+    startBtn.addEventListener("click", () => {
+      setupSelector.style.display = "none";
+      chatContainer.style.display = "flex";
+      inputArea.style.display = "flex";
+      const headerSpan = document.querySelector("header span");
+      const providerLabel = selectedProvider === "bedrock" ? "Bedrock (Claude)" : "OpenAI (GPT)";
+      const agentLabel = selectedAgent === "orchestrator" ? "Orchestrator" : "Single Agent";
+      headerSpan.innerHTML = `医療データアシスタント <span id="chat-badge">${providerLabel} / ${agentLabel}</span>`;
+      input.focus();
     });
 
     function addMessage(role, text) {
@@ -276,7 +348,7 @@
         const res = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, agent: selectedAgent }),
+          body: JSON.stringify({ message: text, agent: selectedAgent, provider: selectedProvider }),
         });
 
         const reader = res.body.getReader();
