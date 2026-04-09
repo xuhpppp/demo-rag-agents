@@ -218,3 +218,6 @@ __marimo__/
 # CSV files and uploaded files
 output/*
 uploads/*
+
+# Backup DB
+synthea_db_backup.sql

@@ -226,6 +226,7 @@ services:
 volumes:
   mysql_data:
   chromadb_data:
+  webapp_uploads:
   langfuse_postgres_data:
   langfuse_redis_data:
   langfuse_clickhouse_data:
