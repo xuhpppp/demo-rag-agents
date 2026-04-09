@@ -72,6 +72,7 @@ ChromaDB (example_collection)
 - Can call both tools in a single turn when the user wants to compare guidelines with actual patient data
 - Preserves inline citations from the RAG agent in its final response
 - Streams the final response token-by-token to the user via SSE
+- All agent invocations are traced via Langfuse `CallbackHandler` for observability
 
 ### SQL Sub-Agent (`agents/synthea_sql_agent.py`)
 
@@ -92,17 +93,24 @@ ChromaDB (example_collection)
 
 - Background async task that continuously processes the file upload queue
 - Loads `.txt` files, splits them into chunks using `RecursiveCharacterTextSplitter`
-- Embeds chunks with Amazon Titan Embed Text v2 and stores them in ChromaDB
+- Embeds chunks with Cohere Embed v4 and stores them in ChromaDB
 - The `vector_store` object is shared with the RAG agent for retrieval
 
 ## Infrastructure
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
+| Webapp | `Dockerfile` (build) | 8000 | FastAPI application — orchestrator, sub-agents, file upload |
 | MySQL | `mysql:8.0.40` | 3306 | Primary database — stores all Synthea patient data |
 | ChromaDB | `chromadb/chroma:1.5.5` | 8001 | Vector database — stores document embeddings for RAG (cosine distance) |
+| Langfuse Web | `langfuse/langfuse:3` | 3000 | Tracing UI — visualize agent traces, LLM calls, and tool usage |
+| Langfuse Worker | `langfuse/langfuse-worker:3` | — | Background worker — processes trace ingestion and analytics |
+| ClickHouse | `clickhouse/clickhouse-server` | 8123 | Analytics database for Langfuse (with built-in Keeper for single-node replication) |
+| MinIO | `minio/minio` | 9090 | S3-compatible blob storage for Langfuse trace data |
+| PostgreSQL | `postgres:17` | 5432 | Metadata database for Langfuse |
+| Redis | `redis:7` | 6379 | Queue backend for Langfuse worker |
 
-Both services are defined in `docker-compose.yml` with persistent named volumes.
+All services are defined in `docker-compose.yml` with persistent named volumes. ClickHouse requires a custom config (`clickhouse-config.xml`) mounted into the container to enable the built-in Keeper for single-node replication.
 
 ## API Endpoints
 

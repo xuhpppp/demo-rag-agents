@@ -10,12 +10,17 @@ from langchain_chroma import Chroma
 from langchain_core.tools import tool
 from langchain.agents import create_agent
 
+from langfuse.langchain import CallbackHandler
+
 from agents.synthea_sql_agent import create_sql_agent
 from agents.rag_agent import create_rag_agent
 from queue_manager import file_queue, FileJob
 from consumer import consume
 
 load_dotenv()
+
+# Initialize Langfuse callback handler for tracing
+langfuse_handler = CallbackHandler()
 
 # Initialize sub-agents
 sql_agent = create_sql_agent()
@@ -28,7 +33,10 @@ def query_synthea_database(question: str) -> str:
     Use this tool when the user asks about patient data, conditions,
     medications, encounters, or any healthcare-related data stored in the database.
     """
-    result = sql_agent.invoke({"messages": [{"role": "user", "content": question}]})
+    result = sql_agent.invoke(
+        {"messages": [{"role": "user", "content": question}]},
+        config={"callbacks": [langfuse_handler]},
+    )
     return result["messages"][-1].content
 
 
@@ -38,7 +46,10 @@ def search_medical_guidelines(question: str) -> str:
     Use this tool when the user asks about healthcare guidelines, treatment protocols,
     clinical recommendations, or medical standards from the knowledge base.
     """
-    result = rag_agent.invoke({"messages": [{"role": "user", "content": question}]})
+    result = rag_agent.invoke(
+        {"messages": [{"role": "user", "content": question}]},
+        config={"callbacks": [langfuse_handler]},
+    )
     return result["messages"][-1].content
 
 
@@ -92,6 +103,11 @@ async def startup():
     asyncio.create_task(consume())
 
 
+@app.on_event("shutdown")
+async def shutdown():
+    langfuse_handler.langfuse.shutdown()
+
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -132,6 +148,7 @@ def chat(req: ChatRequest):
         for chunk, metadata in orchestrator.stream(
             {"messages": [{"role": "user", "content": req.message}]},
             stream_mode="messages",
+            config={"callbacks": [langfuse_handler]},
         ):
             if metadata["langgraph_node"] == "model" and isinstance(
                 chunk.content, list

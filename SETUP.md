@@ -32,19 +32,37 @@ The script will:
 
 > This may take several minutes depending on your machine and network speed.
 
-## 3. Start MySQL and ChromaDB with Docker
+## 3. Configure environment variables
+
+Copy the example and fill in your AWS credentials:
+
+```bash
+cp .env.example .env
+```
+
+Required variables in `.env`:
+
+| Variable | Description |
+|----------|-------------|
+| `AWS_ACCESS_KEY_ID` | AWS credentials for Bedrock (Claude + Cohere embeddings) |
+| `AWS_SECRET_ACCESS_KEY` | AWS credentials for Bedrock |
+| `AWS_REGION` | AWS region (e.g. `ap-northeast-1`) |
+
+The remaining variables (`DB_*`, `CHROMA_*`, `LANGFUSE_*`) have defaults that match the Docker Compose services.
+
+## 4. Start all services with Docker
 
 ```bash
 docker compose up -d
 ```
 
-This starts two containers:
+This starts the following containers:
 
 **MySQL 8.0** (`demo_rag_mysql`):
 
 | Setting | Value |
 |---------|-------|
-| Host | `localhost` |
+| Host | `localhost` (or `mysql` from other containers) |
 | Port | `3306` |
 | Root password | `rootpassword` |
 | App user | `rag_user` |
@@ -55,39 +73,35 @@ This starts two containers:
 
 | Setting | Value |
 |---------|-------|
-| Host | `localhost` |
-| Port | `8000` |
+| Host | `localhost` (or `chromadb` from other containers) |
+| Port | `8001` |
 | Collection | `example_collection` |
 | Distance metric | `cosine` |
 
-## 4. Set up the Python virtual environment
+**Webapp** (`demo_rag_webapp`):
+
+| Setting | Value |
+|---------|-------|
+| URL | `http://localhost:8000` |
+| Image | Built from `Dockerfile` |
+
+**Langfuse** (agent tracing UI):
+
+| Setting | Value |
+|---------|-------|
+| URL | `http://localhost:3000` |
+| Login | `admin@local.dev` / `admin123` |
+
+Langfuse also starts PostgreSQL, ClickHouse, Redis, and MinIO as backing services. Buckets in MinIO are auto-created by the `langfuse-minio-init` service.
+
+> First startup may take a few minutes while images are pulled and Langfuse runs its migrations.
+
+## 5. Create the database schema and load data
+
+This is a one-time step that runs from the host. You need Python and `pymysql` installed locally:
 
 ```bash
-python -m venv .venv
-```
-
-Activate it:
-
-```bash
-# Windows (Git Bash / MSYS2)
-source .venv/Scripts/activate
-
-# Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-
-# Linux / macOS
-source .venv/bin/activate
-```
-
-## 5. Install Python dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-## 6. Create the database schema and load data
-
-```bash
+pip install pymysql
 python script/load_data.py
 ```
 
@@ -119,15 +133,7 @@ Done! All data loaded into synthea_db.
 
 Total: ~3 million rows across 18 tables.
 
-## 7. Run the application
-
-```bash
-uvicorn app:app --reload
-```
-
-The app will be available at `http://localhost:8000`.
-
-## 8. Verify the database
+## 7. Verify the database
 
 Connect to the database and run a quick check:
 
@@ -147,7 +153,7 @@ print(cur.fetchone())  # (1195,)
 conn.close()
 ```
 
-## 9. Upload RAG documents
+## 8. Upload RAG documents
 
 Navigate to `http://localhost:8000/upload` and upload the `.txt` files from `rag_documents/`. These will be chunked, embedded, and stored in ChromaDB automatically via the background consumer.
 
@@ -163,7 +169,10 @@ demo_rag_agents/
 │   └── rag_agent.py          # RAG sub-agent for searching medical guidelines
 ├── rag_documents/            # Japanese medical guideline .txt files for RAG
 ├── static/                   # Chat and upload web UI
-├── docker-compose.yml        # MySQL + ChromaDB container definitions
+├── Dockerfile                # Webapp container image definition
+├── .dockerignore             # Files excluded from Docker build context
+├── docker-compose.yml        # All services (webapp, MySQL, ChromaDB, Langfuse stack)
+├── clickhouse-config.xml     # ClickHouse Keeper config for single-node Langfuse
 ├── script/
 │   ├── init_db.sql           # Database schema (18 tables)
 │   └── load_data.py          # CSV → MySQL loader script
@@ -182,13 +191,13 @@ demo_rag_agents/
 
 ## Teardown
 
-To stop and remove the MySQL container (data is preserved in a Docker volume):
+To stop all containers (data is preserved in Docker volumes):
 
 ```bash
 docker compose down
 ```
 
-To also delete the stored data:
+To also delete all stored data (MySQL, ChromaDB, Langfuse):
 
 ```bash
 docker compose down -v
