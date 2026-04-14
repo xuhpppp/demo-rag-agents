@@ -18,6 +18,7 @@ from agents.rag_agent import create_rag_agent
 from agents.single_agent import create_single_agent
 from queue_manager import file_queue, FileJob
 from consumer import consume
+from guardrail import check_topic_guardrail, GUARDRAIL_REFUSAL
 
 load_dotenv()
 
@@ -195,7 +196,17 @@ async def upload_file(file: UploadFile):
 
 
 @app.post("/chat")
-def chat(req: ChatRequest):
+async def chat(req: ChatRequest):
+    # --- Topic guardrail: reject off-topic questions ---
+    guardrail_model = get_bedrock_model("light") if req.provider == "bedrock" else get_openai_model()
+    on_topic = await check_topic_guardrail(guardrail_model, req.message)
+    if not on_topic:
+        def refuse():
+            yield f"data: {json.dumps(GUARDRAIL_REFUSAL)}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(refuse(), media_type="text/event-stream")
+
+    # --- On-topic: proceed to agent ---
     active_agent = get_agent(req.provider, req.agent)
 
     def generate():
