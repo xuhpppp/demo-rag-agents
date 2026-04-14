@@ -15,6 +15,11 @@ Both modes combine SQL querying of patient data with RAG search over medical gui
 User → selects "Orchestrator" in chat UI
  │
  ▼
+Topic Guardrail (guardrail.py)
+ │   Claude Haiku 4.5 via Bedrock (lightweight classifier)
+ │   Rejects off-topic questions before they reach any agent
+ │
+ ▼ (on-topic only)
 Orchestrator Agent (app.py)
  │   Claude Sonnet 4.6 via Bedrock
  │   Decides which tool(s) to call based on the question
@@ -55,6 +60,11 @@ Orchestrator Agent (app.py)
 User → selects "Single Agent" in chat UI
  │
  ▼
+Topic Guardrail (guardrail.py)
+ │   Claude Haiku 4.5 via Bedrock (lightweight classifier)
+ │   Rejects off-topic questions before they reach any agent
+ │
+ ▼ (on-topic only)
 Single Agent (agents/single_agent.py)
  │   Claude Sonnet 4.6 via Bedrock
  │   Has direct access to all tools — no sub-agents
@@ -95,9 +105,17 @@ ChromaDB (example_collection)
 
 - Entry point for user interaction via FastAPI
 - Initializes both agent modes (orchestrator + single) at startup
+- The `/chat` endpoint runs a **topic guardrail** before routing to any agent — off-topic messages are rejected immediately
 - The `/chat` endpoint accepts an `agent` field (`"orchestrator"` or `"single"`) to select which mode handles the request
 - Streams the final response token-by-token to the user via SSE
 - All agent invocations are traced via Langfuse `CallbackHandler` for observability
+
+### Topic Guardrail (`guardrail.py`)
+
+- Lightweight LLM-based classifier that runs before every agent invocation
+- Uses the light model (Haiku) to classify whether a user message is medical/healthcare-related
+- On-topic messages (patient data, medications, guidelines, procedures, insurance, etc.) pass through to the agent
+- Off-topic messages (coding, sports, recipes, prompt injection attempts, etc.) receive a polite refusal without invoking any agent
 
 ### Orchestrator Agent (`app.py`)
 
