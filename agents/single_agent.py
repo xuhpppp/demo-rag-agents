@@ -33,7 +33,7 @@ def search_medical_guidelines(query: str) -> str:
     return "\n\n---\n\n".join(formatted)
 
 
-def create_single_agent(model):
+def create_single_agent(model, checkpointer=None):
 
     db = SQLDatabase.from_uri(
         f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
@@ -87,4 +87,5 @@ Never use pipe characters for anything other than markdown tables.""".format(
         model=model,
         tools=tools,
         system_prompt=system_prompt,
+        checkpointer=checkpointer,
     )

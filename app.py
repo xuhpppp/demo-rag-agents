@@ -1,5 +1,8 @@
+import asyncio
 import json
 import os
+import time
+from threading import Lock
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile
@@ -10,6 +13,7 @@ from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
 from langchain_core.tools import tool
 from langchain.agents import create_agent
+from langgraph.checkpoint.memory import MemorySaver
 
 from langfuse.langchain import CallbackHandler
 
@@ -21,6 +25,58 @@ from consumer import consume
 from guardrail import check_topic_guardrail, GUARDRAIL_REFUSAL
 
 load_dotenv()
+
+# ---------------------------------------------------------------------------
+# In-memory checkpointer with TTL-based cleanup
+# ---------------------------------------------------------------------------
+
+THREAD_TTL_SECONDS = 5 * 60        # 5 minutes per thread
+CLEANUP_INTERVAL_SECONDS = 30      # sweep every 30 seconds
+
+memory = MemorySaver()
+_thread_last_active: dict[str, float] = {}
+_ttl_lock = Lock()
+
+
+def touch_thread(thread_id: str):
+    """Record or reset the last-active timestamp for a thread."""
+    with _ttl_lock:
+        _thread_last_active[thread_id] = time.time()
+
+
+def _cleanup_expired_threads():
+    """Remove checkpoints for threads that have been idle longer than TTL."""
+    now = time.time()
+    with _ttl_lock:
+        expired = [
+            tid for tid, ts in _thread_last_active.items()
+            if now - ts > THREAD_TTL_SECONDS
+        ]
+        for tid in expired:
+            del _thread_last_active[tid]
+
+    for tid in expired:
+        # MemorySaver keys may be plain strings or tuples containing the thread_id
+        storage_keys = [
+            k for k in memory.storage
+            if k == tid or (isinstance(k, tuple) and tid in k)
+        ]
+        for k in storage_keys:
+            del memory.storage[k]
+        if hasattr(memory, "writes"):
+            writes_keys = [
+                k for k in memory.writes
+                if k == tid or (isinstance(k, tuple) and tid in k)
+            ]
+            for k in writes_keys:
+                del memory.writes[k]
+
+
+async def _periodic_cleanup():
+    """Background loop that sweeps expired threads."""
+    while True:
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+        _cleanup_expired_threads()
 
 # Initialize Langfuse callback handler for tracing
 langfuse_handler = CallbackHandler()
@@ -132,6 +188,7 @@ def _build_orchestrator(provider):
         model=orch_model,
         tools=[query_synthea_database, search_medical_guidelines],
         system_prompt=ORCHESTRATOR_PROMPT,
+        checkpointer=memory,
     )
 
 
@@ -142,7 +199,7 @@ def get_agent(provider: str, agent_type: str):
             _agent_cache[key] = _build_orchestrator(provider)
         else:
             model = get_bedrock_model() if provider == "bedrock" else get_openai_model()
-            _agent_cache[key] = create_single_agent(model)
+            _agent_cache[key] = create_single_agent(model, checkpointer=memory)
     return _agent_cache[key]
 
 app = FastAPI()
@@ -150,8 +207,8 @@ app = FastAPI()
 
 @app.on_event("startup")
 async def startup():
-    import asyncio
     asyncio.create_task(consume())
+    asyncio.create_task(_periodic_cleanup())
 
 
 @app.on_event("shutdown")
@@ -163,6 +220,7 @@ class ChatRequest(BaseModel):
     message: str
     agent: str = "orchestrator"
     provider: str = "openai"
+    thread_id: str = "default"
 
 
 UPLOAD_DIR = "uploads"
@@ -207,13 +265,18 @@ async def chat(req: ChatRequest):
         return StreamingResponse(refuse(), media_type="text/event-stream")
 
     # --- On-topic: proceed to agent ---
+    touch_thread(req.thread_id)
     active_agent = get_agent(req.provider, req.agent)
+    agent_config = {
+        "callbacks": [langfuse_handler],
+        "configurable": {"thread_id": req.thread_id},
+    }
 
     def generate():
         for chunk, metadata in active_agent.stream(
             {"messages": [{"role": "user", "content": req.message}]},
             stream_mode="messages",
-            config={"callbacks": [langfuse_handler]},
+            config=agent_config,
         ):
             if metadata["langgraph_node"] == "model":
                 if isinstance(chunk.content, list):
