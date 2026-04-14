@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agents/ agents/
 COPY static/ static/
-COPY app.py consumer.py queue_manager.py ./
+COPY app.py consumer.py queue_manager.py guardrail.py ./
 
 RUN mkdir -p uploads
 
