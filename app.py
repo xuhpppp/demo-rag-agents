@@ -216,11 +216,17 @@ async def shutdown():
     langfuse_handler.langfuse.shutdown()
 
 
+class ImageData(BaseModel):
+    data: str          # base64-encoded image
+    media_type: str    # e.g. "image/png"
+
+
 class ChatRequest(BaseModel):
     message: str
     agent: str = "orchestrator"
     provider: str = "openai"
     thread_id: str = "default"
+    images: list[ImageData] = []
 
 
 UPLOAD_DIR = "uploads"
@@ -272,9 +278,21 @@ async def chat(req: ChatRequest):
         "configurable": {"thread_id": req.thread_id},
     }
 
+    # Build multimodal content when images are attached
+    if req.images:
+        content = []
+        for img in req.images:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{img.media_type};base64,{img.data}"},
+            })
+        content.append({"type": "text", "text": req.message})
+    else:
+        content = req.message
+
     def generate():
         for chunk, metadata in active_agent.stream(
-            {"messages": [{"role": "user", "content": req.message}]},
+            {"messages": [{"role": "user", "content": content}]},
             stream_mode="messages",
             config=agent_config,
         ):

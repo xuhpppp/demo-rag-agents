@@ -103,6 +103,61 @@
       background: #94bdf2;
       cursor: not-allowed;
     }
+
+    #image-btn {
+      padding: 12px 14px;
+      background: #f0f2f5;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 18px;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    #image-btn:hover { background: #e0e3e7; }
+
+    #image-preview {
+      display: none;
+      padding: 8px 24px;
+      background: #fff;
+      border-top: 1px solid #ddd;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .preview-item {
+      position: relative;
+      display: inline-block;
+    }
+
+    .preview-item img {
+      height: 64px;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+    }
+
+    .preview-item .remove-btn {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 20px;
+      height: 20px;
+      background: #e53935;
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      font-size: 12px;
+      line-height: 20px;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .message.user img {
+      max-width: 200px;
+      border-radius: 8px;
+      display: block;
+      margin-top: 6px;
+    }
     .message.assistant { overflow-x: hidden; }
     .message.assistant p { margin: 4px 0; }
     .message.assistant .table-wrapper { overflow-x: auto; margin: 8px 0; }
@@ -265,7 +320,10 @@
 
   <div id="chat-container" style="display:none;"></div>
 
+  <div id="image-preview" style="display:none;"></div>
   <div id="input-area" style="display:none;">
+    <button id="image-btn" title="画像を添付">📎</button>
+    <input id="image-input" type="file" accept="image/*" multiple style="display:none;">
     <input id="message-input" type="text" placeholder="患者データについて質問してください..." autocomplete="off">
     <button id="send-btn">送信</button>
   </div>
@@ -277,9 +335,13 @@
     const input = document.getElementById("message-input");
     const sendBtn = document.getElementById("send-btn");
     const startBtn = document.getElementById("start-btn");
+    const imageBtn = document.getElementById("image-btn");
+    const imageInput = document.getElementById("image-input");
+    const imagePreview = document.getElementById("image-preview");
     let selectedProvider = null;
     let selectedAgent = null;
     let threadId = null;
+    let pendingImages = []; // { data: base64, media_type: string, dataUrl: string }
 
     document.querySelectorAll(".option-btn").forEach(btn => {
       btn.addEventListener("click", () => {
@@ -304,10 +366,57 @@
       input.focus();
     });
 
-    function addMessage(role, text) {
+    // --- Image handling ---
+
+    imageBtn.addEventListener("click", () => imageInput.click());
+
+    imageInput.addEventListener("change", () => {
+      for (const file of imageInput.files) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const dataUrl = e.target.result;          // data:<media_type>;base64,<data>
+          const [header, base64] = dataUrl.split(",");
+          const media_type = header.match(/data:(.*?);/)[1];
+          pendingImages.push({ data: base64, media_type, dataUrl });
+          renderPreview();
+        };
+        reader.readAsDataURL(file);
+      }
+      imageInput.value = "";
+    });
+
+    function renderPreview() {
+      imagePreview.innerHTML = "";
+      if (pendingImages.length === 0) {
+        imagePreview.style.display = "none";
+        return;
+      }
+      imagePreview.style.display = "flex";
+      pendingImages.forEach((img, idx) => {
+        const item = document.createElement("div");
+        item.className = "preview-item";
+        item.innerHTML = `<img src="${img.dataUrl}"><button class="remove-btn" data-idx="${idx}">&times;</button>`;
+        imagePreview.appendChild(item);
+      });
+      imagePreview.querySelectorAll(".remove-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          pendingImages.splice(Number(btn.dataset.idx), 1);
+          renderPreview();
+        });
+      });
+    }
+
+    function addMessage(role, text, images) {
       const div = document.createElement("div");
       div.className = `message ${role}`;
-      div.textContent = text;
+      if (text) div.textContent = text;
+      if (images && images.length) {
+        images.forEach(img => {
+          const imgEl = document.createElement("img");
+          imgEl.src = img.dataUrl;
+          div.appendChild(imgEl);
+        });
+      }
       chatContainer.appendChild(div);
       chatContainer.scrollTop = chatContainer.scrollHeight;
       return div;
@@ -315,9 +424,13 @@
 
     async function sendMessage() {
       const text = input.value.trim();
-      if (!text) return;
+      if (!text && pendingImages.length === 0) return;
 
-      addMessage("user", text);
+      const images = [...pendingImages];
+      pendingImages = [];
+      renderPreview();
+
+      addMessage("user", text, images);
       input.value = "";
       sendBtn.disabled = true;
 
@@ -350,7 +463,13 @@
         const res = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, agent: selectedAgent, provider: selectedProvider, thread_id: threadId }),
+          body: JSON.stringify({
+            message: text,
+            agent: selectedAgent,
+            provider: selectedProvider,
+            thread_id: threadId,
+            images: images.map(i => ({ data: i.data, media_type: i.media_type })),
+          }),
         });
 
         const reader = res.body.getReader();
