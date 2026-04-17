@@ -355,7 +355,7 @@
     });
 
     startBtn.addEventListener("click", () => {
-      threadId = crypto.randomUUID();
+      threadId = (crypto.randomUUID ?? (() => "xxxx-xxxx-xxxx-xxxx".replace(/x/g, () => ((Math.random() * 16) | 0).toString(16))))();
       setupSelector.style.display = "none";
       chatContainer.style.display = "flex";
       inputArea.style.display = "flex";
